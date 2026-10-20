@@ -1,6 +1,8 @@
 package mrt;
 
 import java.rmi.RemoteException;
+import java.rmi.registry.LocateRegistry;
+import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -9,13 +11,22 @@ import java.util.Map;
 
 public class NodeImpl extends UnicastRemoteObject implements Node {
 
+    private final int id;
+    private volatile int leaderId = 1; // fixed for now, election comes in a later branch
+
     private final Map<String, StockEntry> stock = new HashMap<>();
     private final List<Reservation> reservations = new ArrayList<>();
     private long clock = 0; // Lamport logical clock of this node
 
-    public NodeImpl() throws RemoteException {
+    public NodeImpl(int id) throws RemoteException {
         super();
+        this.id = id;
         seed();
+    }
+
+    // Called after the node is registered: copy the data from a running peer.
+    public void start() {
+        syncFromPeers();
     }
 
     private String key(String hospital, String resource) {
@@ -44,8 +55,85 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
         return clock;
     }
 
+    // ---------- talking to other nodes ----------
+
+    // Returns null if the node cannot be reached.
+    private Node peer(int peerId) {
+        try {
+            Registry registry = LocateRegistry.getRegistry("localhost", Config.PORT_BASE + peerId);
+            return (Node) registry.lookup("Node" + peerId);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void syncFromPeers() {
+        for (int peerId : Config.NODE_IDS) {
+            if (peerId == id) continue;
+            Node p = peer(peerId);
+            if (p == null) continue;
+            try {
+                loadState(p.getState());
+                System.out.println("Synced data from node " + peerId);
+                return;
+            } catch (RemoteException e) {
+                // try the next peer
+            }
+        }
+        System.out.println("No peer found, starting with seed data");
+    }
+
+    private synchronized void loadState(State s) {
+        stock.clear();
+        for (StockEntry e : s.stock) {
+            stock.put(key(e.hospital, e.resource), e);
+        }
+        reservations.clear();
+        reservations.addAll(s.reservations);
+        clock = Math.max(clock, s.clock);
+    }
+
+    // Leader copies every change to all other nodes. A dead node is skipped,
+    // it will sync from a peer when it is started again.
+    private void replicateStockToPeers(StockEntry e) {
+        for (int peerId : Config.NODE_IDS) {
+            if (peerId == id) continue;
+            Node p = peer(peerId);
+            if (p == null) continue;
+            try {
+                p.replicateStock(e);
+            } catch (RemoteException ex) {
+                System.out.println("Could not replicate to node " + peerId);
+            }
+        }
+    }
+
+    private void replicateReservationToPeers(Reservation r, StockEntry e) {
+        for (int peerId : Config.NODE_IDS) {
+            if (peerId == id) continue;
+            Node p = peer(peerId);
+            if (p == null) continue;
+            try {
+                p.replicateReservation(r, e);
+            } catch (RemoteException ex) {
+                System.out.println("Could not replicate to node " + peerId);
+            }
+        }
+    }
+
+    // ---------- client calls (writes go to the leader) ----------
+
+    public boolean updateStock(String hospital, String resource, int count, double distanceKm, long ts) throws RemoteException {
+        if (leaderId != id) {
+            Node leader = peer(leaderId);
+            if (leader == null) throw new RemoteException("Leader node " + leaderId + " is not reachable");
+            return leader.updateStock(hospital, resource, count, distanceKm, ts);
+        }
+        return applyUpdate(hospital, resource, count, distanceKm, ts);
+    }
+
     // synchronized so two clients can never change the same stock at once
-    public synchronized boolean updateStock(String hospital, String resource, int count, double distanceKm, long ts) {
+    private synchronized boolean applyUpdate(String hospital, String resource, int count, double distanceKm, long ts) {
         tick(ts);
         StockEntry old = stock.get(key(hospital, resource));
         if (old != null) {
@@ -57,8 +145,36 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
         }
         put(hospital, resource, Math.max(0, count), distanceKm, ts);
         System.out.println("Update: " + hospital + " " + resource + " = " + count + " (ts " + ts + ")");
+        replicateStockToPeers(stock.get(key(hospital, resource)));
         return true;
     }
+
+    public Reservation reserve(String hospital, String resource, long ts) throws RemoteException {
+        if (leaderId != id) {
+            Node leader = peer(leaderId);
+            if (leader == null) throw new RemoteException("Leader node " + leaderId + " is not reachable");
+            return leader.reserve(hospital, resource, ts);
+        }
+        return applyReserve(hospital, resource, ts);
+    }
+
+    // The check and the decrement happen in one synchronized block,
+    // so two ambulances cannot both get the last bed.
+    private synchronized Reservation applyReserve(String hospital, String resource, long ts) {
+        StockEntry e = stock.get(key(hospital, resource));
+        if (e == null || e.count <= 0) {
+            return null;
+        }
+        e.count--;
+        e.ts = tick(ts); // the reservation is a newer change than anything before it
+        Reservation r = new Reservation("R" + (reservations.size() + 1), hospital, resource, e.ts, new java.util.Date().toString());
+        reservations.add(r);
+        System.out.println("Reserved: " + r.id + " " + hospital + " " + resource);
+        replicateReservationToPeers(r, e);
+        return r;
+    }
+
+    // ---------- reads (served from this node's own copy) ----------
 
     public synchronized List<StockEntry> searchResource(String resource) {
         List<StockEntry> result = new ArrayList<>();
@@ -71,26 +187,38 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
         return result;
     }
 
-    // The check and the decrement happen in one synchronized block,
-    // so two ambulances cannot both get the last bed.
-    public synchronized Reservation reserve(String hospital, String resource, long ts) {
-        StockEntry e = stock.get(key(hospital, resource));
-        if (e == null || e.count <= 0) {
-            return null;
-        }
-        e.count--;
-        e.ts = tick(ts); // the reservation is a newer change than anything before it
-        Reservation r = new Reservation("R" + (reservations.size() + 1), hospital, resource, e.ts, new java.util.Date().toString());
-        reservations.add(r);
-        System.out.println("Reserved: " + r.id + " " + hospital + " " + resource);
-        return r;
-    }
-
     public synchronized List<StockEntry> getAllStock() {
         return new ArrayList<>(stock.values());
     }
 
     public synchronized List<Reservation> getReservations() {
         return new ArrayList<>(reservations);
+    }
+
+    // ---------- calls from other nodes ----------
+
+    public int ping() {
+        return id;
+    }
+
+    public int getLeaderId() {
+        return leaderId;
+    }
+
+    public synchronized void replicateStock(StockEntry e) {
+        tick(e.ts);
+        StockEntry old = stock.get(key(e.hospital, e.resource));
+        if (old == null || e.ts > old.ts) {
+            stock.put(key(e.hospital, e.resource), e);
+        }
+    }
+
+    public synchronized void replicateReservation(Reservation r, StockEntry e) {
+        replicateStock(e);
+        reservations.add(r);
+    }
+
+    public synchronized State getState() {
+        return new State(new ArrayList<>(stock.values()), new ArrayList<>(reservations), clock);
     }
 }

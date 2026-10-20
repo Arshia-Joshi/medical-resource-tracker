@@ -5,9 +5,11 @@ import java.rmi.registry.Registry;
 
 public class ServerMain {
     public static void main(String[] args) throws Exception {
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : 1101;
-        Registry registry = LocateRegistry.createRegistry(port);
-        registry.rebind("Node", new NodeImpl());
-        System.out.println("Node running on RMI port " + port);
+        int id = Integer.parseInt(args[0]); // 1, 2 or 3
+        Registry registry = LocateRegistry.createRegistry(Config.PORT_BASE + id);
+        NodeImpl node = new NodeImpl(id);
+        registry.rebind("Node" + id, node);
+        System.out.println("Node " + id + " running on RMI port " + (Config.PORT_BASE + id));
+        node.start();
     }
 }

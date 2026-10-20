@@ -21,4 +21,19 @@ public interface Node extends Remote {
     List<StockEntry> getAllStock() throws RemoteException;
 
     List<Reservation> getReservations() throws RemoteException;
+
+    // ---- used between nodes ----
+
+    // Returns the id of this node. Used to check that a node is alive.
+    int ping() throws RemoteException;
+
+    int getLeaderId() throws RemoteException;
+
+    // Leader pushes every change to the other nodes with these two calls.
+    void replicateStock(StockEntry entry) throws RemoteException;
+
+    void replicateReservation(Reservation reservation, StockEntry entry) throws RemoteException;
+
+    // Full copy of the data, used by a restarted node to catch up.
+    State getState() throws RemoteException;
 }
