@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { search, reserve } from './api.js'
-import { RESOURCES } from './constants.js'
+import { RESOURCES, ICONS } from './constants.js'
 
 export default function PatientPanel({ reservations, refresh }) {
-  const [resource, setResource] = useState(RESOURCES[0])
+  const [resource, setResource] = useState(null)
   const [results, setResults] = useState(null)
   const [msg, setMsg] = useState(null)
 
-  async function doSearch(r = resource) {
+  async function doSearch(r) {
+    setResource(r)
     try {
       setResults(await search(r))
     } catch (e) {
@@ -22,56 +23,49 @@ export default function PatientPanel({ reservations, refresh }) {
     } catch (e) {
       setMsg({ type: 'error', text: e.message })
     }
-    await doSearch()
+    await doSearch(resource)
     refresh()
   }
 
   return (
     <div>
       <div className="card">
-        <h2>Find the nearest hospital</h2>
-        <div className="row">
-          <select value={resource} onChange={(e) => setResource(e.target.value)}>
-            {RESOURCES.map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
-          <button onClick={() => doSearch()}>Search</button>
+        <h2>What do you need?</h2>
+        <div className="chips">
+          {RESOURCES.map((r) => (
+            <button key={r} className={'chip' + (resource === r ? ' selected' : '')} onClick={() => doSearch(r)}>
+              <span className="chip-icon">{ICONS[r]}</span>
+              {r}
+            </button>
+          ))}
         </div>
 
         {msg && <div className={'msg ' + msg.type}>{msg.text}</div>}
 
-        {results && results.length === 0 && <p>No hospital has {resource} right now.</p>}
+        {results && results.length === 0 && <p className="empty">No hospital has {resource} right now.</p>}
+
         {results && results.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Hospital</th>
-                <th>Distance</th>
-                <th>Available</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((e) => (
-                <tr key={e.hospital}>
-                  <td>{e.hospital}</td>
-                  <td>{e.distanceKm} km</td>
-                  <td>{e.count}</td>
-                  <td>
-                    <button onClick={() => doReserve(e.hospital)}>Reserve</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="results">
+            {results.map((e, i) => (
+              <div key={e.hospital} className="result">
+                <div className="rank">{i + 1}</div>
+                <div className="result-info">
+                  <strong>{e.hospital}</strong>
+                  <span className="small">📍 {e.distanceKm} km away</span>
+                </div>
+                <span className={'badge ' + (e.count <= 3 ? 'low' : 'good')}>{e.count} available</span>
+                <button onClick={() => doReserve(e.hospital)}>Reserve</button>
+              </div>
+            ))}
+          </div>
         )}
+        {!results && <p className="empty">Choose a resource above to see the nearest hospitals.</p>}
       </div>
 
       <div className="card">
         <h2>Reservations</h2>
         {reservations.length === 0 ? (
-          <p>No reservations yet.</p>
+          <p className="empty">No reservations yet.</p>
         ) : (
           <table>
             <thead>
@@ -85,10 +79,14 @@ export default function PatientPanel({ reservations, refresh }) {
             <tbody>
               {[...reservations].reverse().map((r) => (
                 <tr key={r.id}>
-                  <td>{r.id}</td>
+                  <td>
+                    <span className="badge good">{r.id}</span>
+                  </td>
                   <td>{r.hospital}</td>
-                  <td>{r.resource}</td>
-                  <td>{r.time}</td>
+                  <td>
+                    {ICONS[r.resource]} {r.resource}
+                  </td>
+                  <td className="small">{r.time}</td>
                 </tr>
               ))}
             </tbody>

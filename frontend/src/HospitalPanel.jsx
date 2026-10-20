@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { updateStock } from './api.js'
-import { RESOURCES } from './constants.js'
+import { RESOURCES, ICONS } from './constants.js'
 
 export default function HospitalPanel({ stock, refresh }) {
   const hospitals = [...new Set(stock.map((s) => s.hospital))]
@@ -41,7 +41,7 @@ export default function HospitalPanel({ stock, refresh }) {
   return (
     <div>
       <div className="card">
-        <h2>Update hospital stock</h2>
+        <h2>🏥 Update hospital stock</h2>
         <form onSubmit={submit}>
           <label>
             Hospital
@@ -104,7 +104,7 @@ export default function HospitalPanel({ stock, refresh }) {
             <tbody>
               {mine.map((s) => (
                 <tr key={s.resource}>
-                  <td>{s.resource}</td>
+                  <td>{ICONS[s.resource]} {s.resource}</td>
                   <td>{s.count}</td>
                 </tr>
               ))}

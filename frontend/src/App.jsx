@@ -30,20 +30,34 @@ export default function App() {
     return () => clearInterval(timer)
   }, [])
 
-  return (
-    <div className="app">
-      <h1>Medical Resource Availability Tracker</h1>
-      <p className="sub">Distributed Computing Lab mini project &middot; SDG 3 &amp; SDG 9</p>
+  const aliveCount = status.nodes.filter((n) => n.alive).length
 
+  return (
+    <div>
+      <header className="hero">
+        <div className="hero-inner">
+          <div className="logo">✚</div>
+          <div>
+            <h1>Medical Resource Tracker</h1>
+            <p>Find ICU beds, oxygen, ventilators and blood in real time</p>
+          </div>
+          <div className="pills">
+            <span className="pill">SDG 3 · Good Health</span>
+            <span className="pill">{aliveCount} of 3 nodes online</span>
+          </div>
+        </div>
+      </header>
+
+      <div className="app">
       <div className="tabs">
         <button className={tab === 'patient' ? 'active' : ''} onClick={() => setTab('patient')}>
-          Patient / Ambulance
+          🚑 Patient / Ambulance
         </button>
         <button className={tab === 'hospital' ? 'active' : ''} onClick={() => setTab('hospital')}>
-          Hospital
+          🏥 Hospital
         </button>
         <button className={tab === 'cluster' ? 'active' : ''} onClick={() => setTab('cluster')}>
-          Cluster
+          🖥️ Cluster
         </button>
       </div>
 
@@ -52,6 +66,7 @@ export default function App() {
       {tab === 'patient' && <PatientPanel reservations={reservations} refresh={refresh} />}
       {tab === 'hospital' && <HospitalPanel stock={stock} refresh={refresh} />}
       {tab === 'cluster' && <ClusterPanel stock={stock} status={status} refresh={refresh} />}
+      </div>
     </div>
   )
 }
