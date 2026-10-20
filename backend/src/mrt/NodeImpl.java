@@ -11,6 +11,7 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
 
     private final Map<String, StockEntry> stock = new HashMap<>();
     private final List<Reservation> reservations = new ArrayList<>();
+    private long clock = 0; // Lamport logical clock of this node
 
     public NodeImpl() throws RemoteException {
         super();
@@ -21,8 +22,8 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
         return hospital + "|" + resource;
     }
 
-    private void put(String hospital, String resource, int count, double km) {
-        stock.put(key(hospital, resource), new StockEntry(hospital, resource, count, km));
+    private void put(String hospital, String resource, int count, double km, long ts) {
+        stock.put(key(hospital, resource), new StockEntry(hospital, resource, count, km, ts));
     }
 
     private void seed() {
@@ -32,19 +33,30 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
         int[][] counts = {{5, 20, 3, 12}, {2, 10, 1, 8}, {0, 15, 2, 4}, {8, 30, 5, 20}};
         for (int h = 0; h < hospitals.length; h++) {
             for (int r = 0; r < resources.length; r++) {
-                put(hospitals[h], resources[r], counts[h][r], km[h]);
+                put(hospitals[h], resources[r], counts[h][r], km[h], 0);
             }
         }
     }
 
+    // Lamport rule: on receiving a message, clock = max(local, received) + 1
+    private long tick(long received) {
+        clock = Math.max(clock, received) + 1;
+        return clock;
+    }
+
     // synchronized so two clients can never change the same stock at once
-    public synchronized boolean updateStock(String hospital, String resource, int count, double distanceKm) {
+    public synchronized boolean updateStock(String hospital, String resource, int count, double distanceKm, long ts) {
+        tick(ts);
         StockEntry old = stock.get(key(hospital, resource));
         if (old != null) {
+            if (ts <= old.ts) {
+                System.out.println("Stale update ignored: " + hospital + " " + resource + " ts=" + ts + " <= " + old.ts);
+                return false;
+            }
             distanceKm = old.distanceKm;
         }
-        put(hospital, resource, Math.max(0, count), distanceKm);
-        System.out.println("Update: " + hospital + " " + resource + " = " + count);
+        put(hospital, resource, Math.max(0, count), distanceKm, ts);
+        System.out.println("Update: " + hospital + " " + resource + " = " + count + " (ts " + ts + ")");
         return true;
     }
 
@@ -61,13 +73,14 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
 
     // The check and the decrement happen in one synchronized block,
     // so two ambulances cannot both get the last bed.
-    public synchronized Reservation reserve(String hospital, String resource) {
+    public synchronized Reservation reserve(String hospital, String resource, long ts) {
         StockEntry e = stock.get(key(hospital, resource));
         if (e == null || e.count <= 0) {
             return null;
         }
         e.count--;
-        Reservation r = new Reservation("R" + (reservations.size() + 1), hospital, resource, new java.util.Date().toString());
+        e.ts = tick(ts); // the reservation is a newer change than anything before it
+        Reservation r = new Reservation("R" + (reservations.size() + 1), hospital, resource, e.ts, new java.util.Date().toString());
         reservations.add(r);
         System.out.println("Reserved: " + r.id + " " + hospital + " " + resource);
         return r;
