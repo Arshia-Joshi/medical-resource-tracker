@@ -34,6 +34,16 @@ public interface Node extends Remote {
 
     void replicateReservation(Reservation reservation, StockEntry entry) throws RemoteException;
 
+    // Bully algorithm: a lower node asks "are you alive?". A live node answers true
+    // and starts its own election.
+    boolean election(int fromId) throws RemoteException;
+
+    // The winner of an election tells everyone that it is the leader.
+    void coordinator(int leaderId) throws RemoteException;
+
+    // Stops this node. Used to demo a node failure.
+    void shutdown() throws RemoteException;
+
     // Full copy of the data, used by a restarted node to catch up.
     State getState() throws RemoteException;
 }

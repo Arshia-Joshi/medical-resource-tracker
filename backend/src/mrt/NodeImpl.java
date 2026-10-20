@@ -8,11 +8,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NodeImpl extends UnicastRemoteObject implements Node {
 
     private final int id;
-    private volatile int leaderId = 1; // fixed for now, election comes in a later branch
+    private volatile int leaderId = -1; // -1 means no leader yet
+    private final AtomicBoolean electing = new AtomicBoolean(false);
 
     private final Map<String, StockEntry> stock = new HashMap<>();
     private final List<Reservation> reservations = new ArrayList<>();
@@ -25,8 +27,86 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
     }
 
     // Called after the node is registered: copy the data from a running peer.
+    // Then run an election, and keep checking that the leader is alive.
     public void start() {
         syncFromPeers();
+        startElection();
+        Thread monitor = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (leaderId != id && !leaderAlive()) {
+                    System.out.println("Leader " + leaderId + " is down, starting election");
+                    startElection();
+                }
+            }
+        });
+        monitor.setDaemon(true);
+        monitor.start();
+    }
+
+    private boolean leaderAlive() {
+        Node leader = peer(leaderId);
+        if (leader == null) return false;
+        try {
+            leader.ping();
+            return true;
+        } catch (RemoteException e) {
+            return false;
+        }
+    }
+
+    // ---------- Bully election ----------
+
+    private void startElection() {
+        if (!electing.compareAndSet(false, true)) return;
+        try {
+            while (true) {
+                boolean higherAlive = false;
+                for (int peerId : Config.NODE_IDS) {
+                    if (peerId <= id) continue;
+                    Node p = peer(peerId);
+                    if (p == null) continue;
+                    try {
+                        if (p.election(id)) higherAlive = true;
+                    } catch (RemoteException e) {
+                        // that node is down
+                    }
+                }
+                if (!higherAlive) {
+                    becomeLeader();
+                    return;
+                }
+                // A higher node is alive and will take over. Wait for its coordinator message.
+                leaderId = -1;
+                for (int i = 0; i < 15; i++) {
+                    if (leaderId != -1) return;
+                    Thread.sleep(200);
+                }
+            }
+        } catch (InterruptedException e) {
+            // stop
+        } finally {
+            electing.set(false);
+        }
+    }
+
+    private void becomeLeader() {
+        leaderId = id;
+        System.out.println("Node " + id + " is the new leader");
+        for (int peerId : Config.NODE_IDS) {
+            if (peerId == id) continue;
+            Node p = peer(peerId);
+            if (p == null) continue;
+            try {
+                p.coordinator(id);
+            } catch (RemoteException e) {
+                // that node is down
+            }
+        }
     }
 
     private String key(String hospital, String resource) {
@@ -199,6 +279,29 @@ public class NodeImpl extends UnicastRemoteObject implements Node {
 
     public int ping() {
         return id;
+    }
+
+    public boolean election(int fromId) {
+        System.out.println("Election message from node " + fromId + ", answering OK");
+        new Thread(this::startElection).start();
+        return true;
+    }
+
+    public void coordinator(int newLeaderId) {
+        leaderId = newLeaderId;
+        System.out.println("Node " + newLeaderId + " is the leader");
+    }
+
+    public void shutdown() {
+        System.out.println("Shutdown requested");
+        new Thread(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                // ignore
+            }
+            System.exit(0);
+        }).start();
     }
 
     public int getLeaderId() {
