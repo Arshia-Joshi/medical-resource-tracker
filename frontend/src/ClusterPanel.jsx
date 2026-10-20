@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { killNode } from './api.js'
+import { ICONS } from './constants.js'
 
 export default function ClusterPanel({ stock, status, refresh }) {
   const [msg, setMsg] = useState(null)
@@ -25,10 +26,18 @@ export default function ClusterPanel({ stock, status, refresh }) {
             const isLeader = n.alive && n.leaderId === n.id
             return (
               <div key={n.id} className={'node ' + (n.alive ? (isLeader ? 'leader' : 'up') : 'down')}>
+                <div className="node-icon">{isLeader ? '👑' : '🖥️'}</div>
                 <h3>Node {n.id}</h3>
-                <p>{!n.alive ? 'DOWN' : isLeader ? 'LEADER' : 'Backup'}</p>
-                {n.alive && <p className="small">sees leader: node {n.leaderId}</p>}
-                {n.alive && <button onClick={() => kill(n.id)}>Stop node</button>}
+                <p className="node-state">
+                  <span className="dot" />
+                  {!n.alive ? 'Down' : isLeader ? 'Leader' : 'Backup'}
+                </p>
+                {n.alive && <p className="small">follows node {n.leaderId}</p>}
+                {n.alive && (
+                  <button className="danger" onClick={() => kill(n.id)}>
+                    Stop node
+                  </button>
+                )}
               </div>
             )
           })}
@@ -55,9 +64,13 @@ export default function ClusterPanel({ stock, status, refresh }) {
             {sorted.map((s) => (
               <tr key={s.hospital + s.resource}>
                 <td>{s.hospital}</td>
-                <td>{s.resource}</td>
-                <td>{s.count}</td>
-                <td>{s.ts}</td>
+                <td>
+                  {ICONS[s.resource]} {s.resource}
+                </td>
+                <td>
+                  <span className={'badge ' + (s.count === 0 ? 'out' : s.count <= 3 ? 'low' : 'good')}>{s.count}</span>
+                </td>
+                <td className="small">{s.ts}</td>
               </tr>
             ))}
           </tbody>
